@@ -1,6 +1,4 @@
-import queue
 import re
-from fastapi import Query
 from tqdm import tqdm
 from IPython.core.debugger import set_trace
 import copy
@@ -54,15 +52,11 @@ class HandshakingTaggingScheme(object):
         '''
         ent_matrix_spots, head_rel_matrix_spots, tail_rel_matrix_spots = [], [], [] 
 
-        for ent in sample["entity_list"]:
-            tok_span = ent["tok_span"]
-            ent_matrix_spots.append((tok_span[0], tok_span[1], self.tag2id_ent["ENT-H2T"]))
-
         for rel in sample["relation_list"]:
             subj_tok_span = rel["subj_tok_span"]
             obj_tok_span = rel["obj_tok_span"]
-            # ent_matrix_spots.append((subj_tok_span[0], subj_tok_span[1] - 1, self.tag2id_ent["ENT-H2T"]))  # not all ent in rel appear in entity_list
-            # ent_matrix_spots.append((obj_tok_span[0], obj_tok_span[1] - 1, self.tag2id_ent["ENT-H2T"]))
+            ent_matrix_spots.append((subj_tok_span[0], subj_tok_span[1] - 1, self.tag2id_ent["ENT-H2T"]))
+            ent_matrix_spots.append((obj_tok_span[0], obj_tok_span[1] - 1, self.tag2id_ent["ENT-H2T"]))
 
             if  subj_tok_span[0] <= obj_tok_span[0]:
                 head_rel_matrix_spots.append((self.rel2id[rel["predicate"]], subj_tok_span[0], obj_tok_span[0], self.tag2id_head_rel["REL-SH2OH"]))
@@ -70,9 +64,9 @@ class HandshakingTaggingScheme(object):
                 head_rel_matrix_spots.append((self.rel2id[rel["predicate"]], obj_tok_span[0], subj_tok_span[0], self.tag2id_head_rel["REL-OH2SH"]))
                 
             if subj_tok_span[1] <= obj_tok_span[1]:
-                tail_rel_matrix_spots.append((self.rel2id[rel["predicate"]], subj_tok_span[1], obj_tok_span[1], self.tag2id_tail_rel["REL-ST2OT"]))
+                tail_rel_matrix_spots.append((self.rel2id[rel["predicate"]], subj_tok_span[1] - 1, obj_tok_span[1] - 1, self.tag2id_tail_rel["REL-ST2OT"]))
             else:
-                tail_rel_matrix_spots.append((self.rel2id[rel["predicate"]], obj_tok_span[1], subj_tok_span[1], self.tag2id_tail_rel["REL-OT2ST"]))
+                tail_rel_matrix_spots.append((self.rel2id[rel["predicate"]], obj_tok_span[1] - 1, subj_tok_span[1] - 1, self.tag2id_tail_rel["REL-OT2ST"]))
                 
         return ent_matrix_spots, head_rel_matrix_spots, tail_rel_matrix_spots
 
@@ -262,57 +256,18 @@ class DataMaker4Bert():
         self.tokenizer = tokenizer
         self.handshaking_tagger = handshaking_tagger
     
-    def bert_inputs(self, input_:list, max_length = 180):
-    
-        input_ids = self.tokenizer.convert_tokens_to_ids(input_)
-        if len(input_ids) <= max_length:
-            attention_mask = [1]*len(input_ids) + [0]*(max_length-len(input_ids))
-            input_ids.extend([0]*(max_length-len(input_ids)))
-        else:
-            input_ids = input_ids[:max_length]
-            attention_mask = [1]*len(input_ids)
-        token_type_ids = [0]*len(input_ids)
-        
-        offset_mapping = []
-        start = 0
-        for id in input_ids:
-            if id not in [0,102]:
-                offset_mapping.append((start,start+1))
-                start+=1
-            elif id==0:
-                offset_mapping.append((0,0))
-            elif id==102:
-                offset_mapping.append((start,start+ len('[SEP]')))
-                start+=len('[SEP]')
-
-        input_ids = torch.tensor(input_ids)
-        token_type_ids = torch.tensor(token_type_ids)
-        attention_mask = torch.tensor(attention_mask)
-         
-        result = {"input_ids":input_ids, # 增加一维 适配模型输入
-                "token_type_ids":token_type_ids,
-                "attention_mask":attention_mask,
-                "offset_mapping":offset_mapping,
-        }
-        return result
-
     def get_indexed_data(self, data, max_seq_len, data_type = "train"):
         indexed_samples = []
         for ind, sample in tqdm(enumerate(data), desc = "Generate indexed train or valid data"):
             text = sample["text"]
             # codes for bert input
-            # codes = self.tokenizer.encode_plus(text, 
-            #                         return_offsets_mapping = True, 
-            #                         add_special_tokens = False,
-            #                         max_length = max_seq_len, 
-            #                         truncation = True,
-            #                         pad_to_max_length = True)
+            codes = self.tokenizer.encode_plus(text, 
+                                    return_offsets_mapping = True, 
+                                    add_special_tokens = False,
+                                    max_length = max_seq_len, 
+                                    truncation = True,
+                                    pad_to_max_length = True)
 
-            text_sep = text.split('[SEP]')
-            query = text_sep[0].lower()
-            relations = text_sep[1].lower()
-            input_ = ([char for char in query] + ['[SEP]'] + [char for char in relations])
-            codes = self.bert_inputs(input_, max_seq_len)
 
             # tagging
             spots_tuple = None
@@ -447,7 +402,7 @@ class TPLinkerBert(nn.Module):
         hidden_size = encoder.config.hidden_size
         
         self.ent_fc = nn.Linear(hidden_size, 2)
-        self.head_rel_fc_list = [nn.Linear(hidden_size, 3) for _ in range(rel_size)] # 0,1 no direction; 0,1,2 has direction
+        self.head_rel_fc_list = [nn.Linear(hidden_size, 3) for _ in range(rel_size)]
         self.tail_rel_fc_list = [nn.Linear(hidden_size, 3) for _ in range(rel_size)]
         
         for ind, fc in enumerate(self.head_rel_fc_list):
@@ -460,7 +415,7 @@ class TPLinkerBert(nn.Module):
         # handshaking kernel
         self.handshaking_kernel = HandshakingKernel(hidden_size, shaking_type, inner_enc_type)
         
-        # distance embedding
+                # distance embedding
         self.dist_emb_size = dist_emb_size
         self.dist_embbedings = None # it will be set in the first forwarding
         
@@ -472,11 +427,43 @@ class TPLinkerBert(nn.Module):
         context_outputs = self.encoder(input_ids, attention_mask, token_type_ids)
         # last_hidden_state: (batch_size, seq_len, hidden_size)
         last_hidden_state = context_outputs[0]
-        lh_size = last_hidden_state.size() 
+        
         # shaking_hiddens: (batch_size, 1 + ... + seq_len, hidden_size)
         shaking_hiddens = self.handshaking_kernel(last_hidden_state)
         shaking_hiddens4ent = shaking_hiddens
         shaking_hiddens4rel = shaking_hiddens
+        
+        # add distance embeddings if it is set
+        if self.dist_emb_size != -1:
+            # set self.dist_embbedings
+            hidden_size = shaking_hiddens.size()[-1]
+            if self.dist_embbedings is None:
+                dist_emb = torch.zeros([self.dist_emb_size, hidden_size]).to(shaking_hiddens.device)
+                for d in range(self.dist_emb_size):
+                    for i in range(hidden_size):
+                        if i % 2 == 0:
+                            dist_emb[d][i] = math.sin(d / 10000**(i / hidden_size))
+                        else:
+                            dist_emb[d][i] = math.cos(d / 10000**((i - 1) / hidden_size))
+                seq_len = input_ids.size()[1]
+                dist_embbeding_segs = []
+                for after_num in range(seq_len, 0, -1):
+                    dist_embbeding_segs.append(dist_emb[:after_num, :])
+                self.dist_embbedings = torch.cat(dist_embbeding_segs, dim = 0)
+            
+            if self.ent_add_dist:
+                shaking_hiddens4ent = shaking_hiddens + self.dist_embbedings[None,:,:].repeat(shaking_hiddens.size()[0], 1, 1)
+            if self.rel_add_dist:
+                shaking_hiddens4rel = shaking_hiddens + self.dist_embbedings[None,:,:].repeat(shaking_hiddens.size()[0], 1, 1)
+                
+#         if self.dist_emb_size != -1 and self.ent_add_dist:
+#             shaking_hiddens4ent = shaking_hiddens + self.dist_embbedings[None,:,:].repeat(shaking_hiddens.size()[0], 1, 1)
+#         else:
+#             shaking_hiddens4ent = shaking_hiddens
+#         if self.dist_emb_size != -1 and self.rel_add_dist:
+#             shaking_hiddens4rel = shaking_hiddens + self.dist_embbedings[None,:,:].repeat(shaking_hiddens.size()[0], 1, 1)
+#         else:
+#             shaking_hiddens4rel = shaking_hiddens
             
         ent_shaking_outputs = self.ent_fc(shaking_hiddens4ent)
             

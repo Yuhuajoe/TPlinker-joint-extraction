@@ -142,13 +142,13 @@ class HandshakingKernel(nn.Module):
         seq_len = seq_hiddens.size()[-2]
         shaking_hiddens_list = []
         for ind in range(seq_len):
-            hidden_each_step = seq_hiddens[:, ind, :]
-            visible_hiddens = seq_hiddens[:, ind:, :] # ind: only look back
-            repeat_hiddens = hidden_each_step[:, None, :].repeat(1, seq_len - ind, 1)  
+            hidden_each_step = seq_hiddens[:, ind, :] # tensor of current token
+            visible_hiddens = seq_hiddens[:, ind:, :] # tensors after current token 
+            repeat_hiddens = hidden_each_step[:, None, :].repeat(1, seq_len - ind, 1)   # repeat tensor of current token
             
             if self.shaking_type == "cat":
-                shaking_hiddens = torch.cat([repeat_hiddens, visible_hiddens], dim = -1)
-                shaking_hiddens = torch.tanh(self.combine_fc(shaking_hiddens))
+                shaking_hiddens = torch.cat([repeat_hiddens, visible_hiddens], dim = -1) # concat current tensor and every afters tensor
+                shaking_hiddens = torch.tanh(self.combine_fc(shaking_hiddens)) # linear and tanh
             elif self.shaking_type == "cat_plus":
                 inner_context = self.enc_inner_hiddens(visible_hiddens, self.inner_enc_type)
                 shaking_hiddens = torch.cat([repeat_hiddens, visible_hiddens, inner_context], dim = -1)

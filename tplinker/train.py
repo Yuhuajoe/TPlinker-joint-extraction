@@ -6,6 +6,10 @@
 
 import json
 import os
+import sys
+#设置当前工作目录，放在import其他路径模块之前
+sys.path.append(os.getcwd())
+sys.path.append("..")
 from tqdm import tqdm
 import re
 from IPython.core.debugger import set_trace
@@ -30,6 +34,7 @@ import wandb
 import config
 from glove import Glove
 import numpy as np
+from pytorchtools import EarlyStopping
 
 
 # In[ ]:
@@ -141,7 +146,8 @@ max_tok_num = 0
 all_data = train_data + valid_data 
     
 for sample in all_data:
-    tokens = tokenize(sample["text"])
+    text_sep = sample["text"].split('[SEP]')
+    tokens = [char for char in text_sep[0]] + ['[SEP]'] +  [char for char in text_sep[1]]
     max_tok_num = max(max_tok_num, len(tokens))
 max_tok_num
 
@@ -395,7 +401,10 @@ def train_step(batch_train_data, optimizer, loss_weights):
         ent_shaking_outputs,         head_rel_shaking_outputs,         tail_rel_shaking_outputs = rel_extractor(batch_input_ids)
     
     w_ent, w_rel = loss_weights["ent"], loss_weights["rel"]
-    loss = w_ent * loss_func(ent_shaking_outputs, batch_ent_shaking_tag) +             w_rel * loss_func(head_rel_shaking_outputs, batch_head_rel_shaking_tag) +             w_rel * loss_func(tail_rel_shaking_outputs, batch_tail_rel_shaking_tag)
+    ent_loss = loss_func(ent_shaking_outputs, batch_ent_shaking_tag)
+    rel_head_loss = loss_func(head_rel_shaking_outputs, batch_head_rel_shaking_tag)
+    rel_tail_loss = loss_func(tail_rel_shaking_outputs, batch_tail_rel_shaking_tag)
+    loss = w_ent * ent_loss + w_rel * rel_head_loss + w_rel * rel_tail_loss
     
     loss.backward()
     optimizer.step()
@@ -410,7 +419,7 @@ def train_step(batch_train_data, optimizer, loss_weights):
     return loss.item(), ent_sample_acc.item(), head_rel_sample_acc.item(), tail_rel_sample_acc.item()
 
 # valid step
-def valid_step(batch_valid_data):
+def valid_step(batch_valid_data, loss_weights):
     if config["encoder"] == "BERT":
         sample_list, batch_input_ids,         batch_attention_mask, batch_token_type_ids,         tok2char_span_list, batch_ent_shaking_tag,         batch_head_rel_shaking_tag, batch_tail_rel_shaking_tag = batch_valid_data
         
@@ -440,6 +449,8 @@ def valid_step(batch_valid_data):
         elif config["encoder"] in {"BiLSTM", }:
             ent_shaking_outputs,             head_rel_shaking_outputs,             tail_rel_shaking_outputs = rel_extractor(batch_input_ids)
 
+    w_ent, w_rel = loss_weights["ent"], loss_weights["rel"]
+    loss = w_ent * loss_func(ent_shaking_outputs, batch_ent_shaking_tag) +             w_rel * loss_func(head_rel_shaking_outputs, batch_head_rel_shaking_tag) +             w_rel * loss_func(tail_rel_shaking_outputs, batch_tail_rel_shaking_tag)
     
     ent_sample_acc = metrics.get_sample_accuracy(ent_shaking_outputs, 
                                           batch_ent_shaking_tag)
@@ -455,7 +466,7 @@ def valid_step(batch_valid_data):
                                     hyper_parameters["match_pattern"]
                                     )
     
-    return ent_sample_acc.item(), head_rel_sample_acc.item(), tail_rel_sample_acc.item(), rel_cpg
+    return loss.item(),  ent_sample_acc.item(), head_rel_sample_acc.item(), tail_rel_sample_acc.item(), rel_cpg
 
 
 # In[ ]:
@@ -533,10 +544,20 @@ def train_n_valid(train_dataloader, dev_dataloader, optimizer, scheduler, num_ep
         rel_extractor.eval()
         
         t_ep = time.time()
-        total_ent_sample_acc, total_head_rel_sample_acc, total_tail_rel_sample_acc = 0., 0., 0.
+        total_loss, total_ent_sample_acc, total_head_rel_sample_acc, total_tail_rel_sample_acc = 0., 0., 0., 0.
         total_rel_correct_num, total_rel_pred_num, total_rel_gold_num = 0, 0, 0
         for batch_ind, batch_valid_data in enumerate(tqdm(dataloader, desc = "Validating")):
-            ent_sample_acc, head_rel_sample_acc, tail_rel_sample_acc, rel_cpg = valid_step(batch_valid_data)
+            z = (2 * len(rel2id) + 1)
+            steps_per_ep = len(dataloader)
+            total_steps = hyper_parameters["loss_weight_recover_steps"] + 1 # + 1 avoid division by zero error
+            current_step = steps_per_ep * ep + batch_ind
+            w_ent = max(1 / z + 1 - current_step / total_steps, 1 / z)
+            w_rel = min((len(rel2id) / z) * current_step / total_steps, (len(rel2id) / z))
+            loss_weights = {"ent": w_ent, "rel": w_rel}
+            loss, ent_sample_acc, head_rel_sample_acc, tail_rel_sample_acc, rel_cpg = valid_step(batch_valid_data, loss_weights)
+
+            total_loss += loss
+            avg_loss = total_loss / (batch_ind + 1)
 
             total_ent_sample_acc += ent_sample_acc
             total_head_rel_sample_acc += head_rel_sample_acc
@@ -552,7 +573,8 @@ def train_n_valid(train_dataloader, dev_dataloader, optimizer, scheduler, num_ep
         
         rel_prf = metrics.get_prf_scores(total_rel_correct_num, total_rel_pred_num, total_rel_gold_num)
         
-        log_dict = {
+        log_dict = {    
+                        "val_loss": avg_loss,
                         "val_ent_seq_acc": avg_ent_sample_acc,
                         "val_head_rel_acc": avg_head_rel_sample_acc,
                         "val_tail_rel_acc": avg_tail_rel_sample_acc,
@@ -564,11 +586,11 @@ def train_n_valid(train_dataloader, dev_dataloader, optimizer, scheduler, num_ep
         logger.log(log_dict)
         pprint(log_dict)
         
-        return rel_prf[2]
+        return avg_loss, rel_prf[2]
         
     for ep in range(num_epoch):
-        train(train_dataloader, ep)   
-        valid_f1 = valid(valid_dataloader, ep)
+        train(train_dataloader, ep)
+        val_loss, valid_f1 = valid(valid_dataloader, ep)
         
         global max_f1
         if valid_f1 >= max_f1: 
@@ -580,7 +602,21 @@ def train_n_valid(train_dataloader, dev_dataloader, optimizer, scheduler, num_ep
 #                 torch.save(scheduler.state_dict(), os.path.join(schedule_state_dict_dir, "scheduler_state_dict_{}.pt".format(scheduler_state_num))) 
         print("Current avf_f1: {}, Best f1: {}".format(valid_f1, max_f1))
 
+        # early_stop
+        early_stopping = EarlyStopping(patience=10, verbose=True) ###20次都不下降则为best model
+        early_stopping(val_loss, rel_extractor) # loss,model
+        
+        if early_stopping.early_stop:
+            modle_state_num = len(glob.glob(model_state_dict_dir + "/model_state_dict_*.pt"))
+            torch.save(rel_extractor.state_dict(), os.path.join(model_state_dict_dir, "model_state_dict_{}.pt".format(modle_state_num)))
+            print("The Early stopping epoch is this:",ep)
+            #stop_epoch=epoch
+            break
+        ## 保留last  checkpoint with the best model
+        # rel_extractor.load_state_dict(torch.load('checkpoint.pt'))
 
+    modle_state_num = len(glob.glob(model_state_dict_dir + "/model_state_dict_*.pt"))
+    torch.save(rel_extractor.state_dict(), os.path.join(model_state_dict_dir, "model_state_dict_{}.pt".format(ep)))
 # In[ ]:
 
 

@@ -1,10 +1,10 @@
-exp_name: webnlg_star # nyt_star, nyt, webnlg_star, webnlg, ace05_lu
-data_in_dir: ../ori_data
-ori_data_format: casrel # casrel (webnlg_star, nyt_star), etl_span (webnlg), raw_nyt (nyt), tplinker (see readme)
+exp_name: webnlg # nyt_star, nyt, webnlg_star, webnlg, ace05_lu
+data_in_dir: /home/eco/zyh/data
+ori_data_format: etl_span # casrel (webnlg_star, nyt_star), etl_span (webnlg), raw_nyt (nyt), tplinker (see readme)
 
 # if build data for BERT, use these 3 lines and comment the following 2 lines.
 encoder: BERT
-bert_path: ../../pretrained_models/bert-base-cased #  chinese-bert-wwm-ext-hit, bert-base-cased
+bert_path: /home/eco/zyh/model/huggingface/bert-base-cased #  chinese-bert-wwm-ext-hit, bert-base-cased
 data_out_dir: ../data4bert
 
 # # if build data for BiLSTM, use these 2 lines and comment above 3 lines.

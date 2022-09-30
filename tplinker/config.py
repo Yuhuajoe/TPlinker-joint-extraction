@@ -2,8 +2,8 @@ import string
 import random
 
 common = {
-    "exp_name": "nyt_star",
-    "rel2id": "rel2id.json",
+    "exp_name": "webnlg",
+    "rel2id": "rel2id_sample.json", # rel2id.json
     "device_num": 0,
 #     "encoder": "BiLSTM",
     "encoder": "BERT", 
@@ -13,23 +13,23 @@ common = {
         "dist_emb_size": -1, # -1: do not use distance embedding; other number: need to be larger than the max_seq_len of the inputs. set -1 if you only want to reproduce the results in the paper.
         "ent_add_dist": False, # set true if you want add distance embeddings for each token pairs. (for entity decoder)
         "rel_add_dist": False, # the same as above (for relation decoder)
-        "match_pattern": "only_head_text", # only_head_text (nyt_star, webnlg_star), whole_text (nyt, webnlg), only_head_index, whole_span
+        "match_pattern": "whole_text", # only_head_text (nyt_star, webnlg_star), whole_text (nyt, webnlg), only_head_index, whole_span
     },
 }
 common["run_name"] = "{}+{}+{}".format("TP1", common["hyper_parameters"]["shaking_type"], common["encoder"]) + ""
 
 run_id = ''.join(random.sample(string.ascii_letters + string.digits, 8))
 train_config = {
-    "train_data": "train_data.json",
-    "valid_data": "valid_data.json",
-    "rel2id": "rel2id.json",
-    "logger": "wandb", # if wandb, comment the following four lines
+    "train_data": "/home/eco/zyh/jupyter/ccks_kbqa/tplinker/ccks_train.json", # train_data.json
+    "valid_data": "/home/eco/zyh/jupyter/ccks_kbqa/tplinker/ccks_valid.json", # valid_data.json
+    "rel2id": "rel2id_sample.json", # rel2id.json
+    # "logger": "wandb", # if wandb, comment the following four lines
     
-#     # if logger is set as default, uncomment the following four lines
-#     "logger": "default", 
-#     "run_id": run_id,
-#     "log_path": "./default_log_dir/default.log",
-#     "path_to_save_model": "./default_log_dir/{}".format(run_id),
+    # if logger is set as default, uncomment the following four lines
+    "logger": "default", 
+    "run_id": run_id,
+    "log_path": "./default_log_dir/default.log",
+    "path_to_save_model": "./default_log_dir/{}".format(run_id),
 
     # only save the model state dict if F1 score surpasses <f1_2_save>
     "f1_2_save": 0, 
@@ -40,11 +40,11 @@ train_config = {
     # if not fr scratch, set a model_state_dict
     "model_state_dict_path": "",
     "hyper_parameters": {
-        "batch_size": 6,
+        "batch_size": 8,
         "epochs": 100,
         "seed": 2333,
         "log_interval": 10,
-        "max_seq_len": 100,
+        "max_seq_len": 180,
         "sliding_len": 20,
         "loss_weight_recover_steps": 6000, # to speed up the training process, the loss of EH-to-ET sequence is set higher than other sequences at the beginning, but it will recover in <loss_weight_recover_steps> steps.
         "scheduler": "CAWR", # Step
@@ -52,7 +52,7 @@ train_config = {
 }
 
 eval_config = {
-    "model_state_dict_dir": "./wandb", # if use wandb, set "./wandb", or set "./default_log_dir" if you use default logger
+    "model_state_dict_dir": "./default_log_dir", # if use wandb, set "./wandb", or set "./default_log_dir" if you use default logger
     "run_ids": ["10suiyrf", ],
     "last_k_model": 1,
     "test_data": "*test*.json", # "*test*.json"
@@ -65,16 +65,16 @@ eval_config = {
     "score": True,
     
     "hyper_parameters": {
-        "batch_size": 32,
+        "batch_size": 12,
         "force_split": False,
-        "max_test_seq_len": 512,
+        "max_test_seq_len": 180,
         "sliding_len": 50,
     },
 }
 
 bert_config = {
-    "data_home": "../data4bert",
-    "bert_path": "../../pretrained_models/bert-base-cased",
+    "data_home": "data4bert",
+    "bert_path": "/home/eco/zyh/model/huggingface/bert-base-chinese", # rbt4
     "hyper_parameters": {
         "lr": 5e-5,
     },
